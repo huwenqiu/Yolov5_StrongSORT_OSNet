@@ -33,14 +33,18 @@ from yolov5.utils.general import (LOGGER, check_img_size, non_max_suppression, s
                                   check_imshow, xyxy2xywh, increment_path, strip_optimizer, colorstr, print_args, check_file)
 from yolov5.utils.torch_utils import select_device, time_sync
 from yolov5.utils.plots import Annotator, colors, save_one_box
+
 from strong_sort.utils.parser import get_config
 from strong_sort.strong_sort import StrongSORT
+
+from bot_sort.bot_sort import BoTSORT
 
 # remove duplicated stream handler to avoid duplicated logging
 logging.getLogger().removeHandler(logging.getLogger().handlers[0])
 
 @torch.no_grad()
 def run(
+        opts,
         source='0',
         yolo_weights=WEIGHTS / 'yolov5m.pt',  # model.pt path(s),
         strong_sort_weights=WEIGHTS / 'osnet_x0_25_msmt17.pt',  # model.pt path,
@@ -71,6 +75,22 @@ def run(
         half=False,  # use FP16 half-precision inference
         dnn=False,  # use OpenCV DNN for ONNX inference
         eval=False,  # run multi-gpu eval
+        #####
+        track_high_thresh=0.6,
+        track_low_thresh=0.1,
+        new_track_thresh=0.7,
+        track_buffer=30,
+        match_thresh=0.8,
+        aspect_ratio_thresh=1.6,
+        min_box_area=10,
+        #####
+        cmc_method='ecc',
+        #####
+        with_reid=True,
+        fast_reid_config="fast_reid/configs/MOT17/sbs_S50.yml",
+        fast_reid_weights="pretrained/mot17_sbs_S50.pth",
+        proximity_thresh=0.5,
+        appearance_thresh=0.25,
 ):
 
     source = str(source)
@@ -117,24 +137,12 @@ def run(
     cfg.merge_from_file(config_strongsort)
 
     # Create as many strong sort instances as there are video sources
-    strongsort_list = []
+    botsort_list = []
     for i in range(nr_sources):
-        strongsort_list.append(
-            StrongSORT(
-                strong_sort_weights,
-                device,
-                half,
-                max_dist=cfg.STRONGSORT.MAX_DIST,
-                max_iou_distance=cfg.STRONGSORT.MAX_IOU_DISTANCE,
-                max_age=cfg.STRONGSORT.MAX_AGE,
-                n_init=cfg.STRONGSORT.N_INIT,
-                nn_budget=cfg.STRONGSORT.NN_BUDGET,
-                mc_lambda=cfg.STRONGSORT.MC_LAMBDA,
-                ema_alpha=cfg.STRONGSORT.EMA_ALPHA,
-
-            )
+        botsort_list.append(
+            BoTSORT(opts, 30)
         )
-        strongsort_list[i].model.warmup()
+        #strongsort_list[i].model.warmup()
     outputs = [None] * nr_sources
 
     # Run tracking
@@ -188,8 +196,8 @@ def run(
             imc = im0.copy() if save_crop else im0  # for save_crop
 
             annotator = Annotator(im0, line_width=2, pil=not ascii)
-            if cfg.STRONGSORT.ECC:  # camera motion compensation
-                strongsort_list[i].tracker.camera_update(prev_frames[i], curr_frames[i])
+            # if cfg.STRONGSORT.ECC:  # camera motion compensation
+            #     botsort_list[i].tracker.camera_update(prev_frames[i], curr_frames[i])
 
             if det is not None and len(det):
                 # Rescale boxes from img_size to im0 size
@@ -206,43 +214,38 @@ def run(
 
                 # pass detections to strongsort
                 t4 = time_sync()
-                outputs[i] = strongsort_list[i].update(xywhs.cpu(), confs.cpu(), clss.cpu(), im0)
+                outputs[i] = botsort_list[i].update(det.cpu(), im0)
                 t5 = time_sync()
                 dt[3] += t5 - t4
 
                 # draw boxes for visualization
-                if len(outputs[i]) > 0:
-                    for j, (output, conf) in enumerate(zip(outputs[i], confs)):
-    
-                        bboxes = output[0:4]
-                        id = output[4]
-                        cls = output[5]
+                for t in outputs[i]:
+                    tlwh = t.tlwh
+                    # to MOT format
+                    bbox_left = tlwh[0]
+                    bbox_top = tlwh[1]
+                    bbox_w = tlwh[2]
+                    bbox_h = tlwh[3]
+                    tid = t.track_id
+                    if save_txt:
+                        # Write MOT compliant results to file
+                        with open(txt_path + '.txt', 'a') as f:
+                            f.write(('%g ' * 10 + '\n') % (frame_idx + 1, tid, bbox_left,  # MOT format
+                                                            bbox_top, bbox_w, bbox_h, -1, -1, -1, i))
 
-                        if save_txt:
-                            # to MOT format
-                            bbox_left = output[0]
-                            bbox_top = output[1]
-                            bbox_w = output[2] - output[0]
-                            bbox_h = output[3] - output[1]
-                            # Write MOT compliant results to file
-                            with open(txt_path + '.txt', 'a') as f:
-                                f.write(('%g ' * 10 + '\n') % (frame_idx + 1, id, bbox_left,  # MOT format
-                                                               bbox_top, bbox_w, bbox_h, -1, -1, -1, i))
-
-                        if save_vid or save_crop or show_vid:  # Add bbox to image
-                            c = int(cls)  # integer class
-                            id = int(id)  # integer id
-                            label = None if hide_labels else (f'{id} {names[c]}' if hide_conf else \
-                                (f'{id} {conf:.2f}' if hide_class else f'{id} {names[c]} {conf:.2f}'))
-                            annotator.box_label(bboxes, label, color=colors(c, True))
-                            if save_crop:
-                                txt_file_name = txt_file_name if (isinstance(path, list) and len(path) > 1) else ''
-                                save_one_box(bboxes, imc, file=save_dir / 'crops' / txt_file_name / names[c] / f'{id}' / f'{p.stem}.jpg', BGR=True)
+                    if save_vid or save_crop or show_vid:  # Add bbox to image
+                        tid = int(tid)  # integer id
+                        label = None if hide_labels else (f'{tid}' if hide_conf else \
+                            (f'{tid}' if hide_class else f'{tid}'))
+                        annotator.box_label(tlwh, label, color=colors(c, True))
+                        if save_crop:
+                            txt_file_name = txt_file_name if (isinstance(path, list) and len(path) > 1) else ''
+                            save_one_box(bboxes, imc, file=save_dir / 'crops' / txt_file_name / f'{tid}' / f'{p.stem}.jpg', BGR=True)
 
                 LOGGER.info(f'{s}Done. YOLO:({t3 - t2:.3f}s), StrongSORT:({t5 - t4:.3f}s)')
 
             else:
-                strongsort_list[i].increment_ages()
+                # strongsort_list[i].increment_ages()
                 LOGGER.info('No detections')
 
             # Stream results
@@ -312,6 +315,25 @@ def parse_opt():
     parser.add_argument('--half', action='store_true', help='use FP16 half-precision inference')
     parser.add_argument('--dnn', action='store_true', help='use OpenCV DNN for ONNX inference')
     parser.add_argument('--eval', action='store_true', help='run evaluation')
+
+    # tracking args
+    parser.add_argument("--track_high_thresh", type=float, default=0.6, help="tracking confidence threshold")
+    parser.add_argument("--track_low_thresh", default=0.1, type=float, help="lowest detection threshold valid for tracks")
+    parser.add_argument("--new_track_thresh", default=0.7, type=float, help="new track thresh")
+    parser.add_argument("--track_buffer", type=int, default=30, help="the frames for keep lost tracks")
+    parser.add_argument("--match_thresh", type=float, default=0.8, help="matching threshold for tracking")
+    parser.add_argument("--aspect_ratio_thresh", type=float, default=1.6, help="threshold for filtering out boxes of which aspect ratio are above the given value.")
+    parser.add_argument('--min_box_area', type=float, default=10, help='filter out tiny boxes')
+
+    # CMC
+    parser.add_argument("--cmc-method", default="ecc", type=str, help="cmc method: files (Vidstab GMC) | orb | ecc |none")
+
+    # ReID
+    parser.add_argument("--with-reid", dest="with_reid", default=False, action="store_true", help="use Re-ID flag.")
+    parser.add_argument("--fast-reid-config", dest="fast_reid_config", default=r"fast_reid/configs/MOT17/sbs_S50.yml", type=str, help="reid config file path")
+    parser.add_argument("--fast-reid-weights", dest="fast_reid_weights", default=r"pretrained/mot17_sbs_S50.pth", type=str, help="reid config file path")
+    parser.add_argument('--proximity_thresh', type=float, default=0.5, help='threshold for rejecting low overlap reid matches')
+    parser.add_argument('--appearance_thresh', type=float, default=0.25, help='threshold for rejecting low appearance similarity reid matches')
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     print_args(vars(opt))
@@ -320,7 +342,7 @@ def parse_opt():
 
 def main(opt):
     check_requirements(requirements=ROOT / 'requirements.txt', exclude=('tensorboard', 'thop'))
-    run(**vars(opt))
+    run(opt, **vars(opt))
 
 
 if __name__ == "__main__":

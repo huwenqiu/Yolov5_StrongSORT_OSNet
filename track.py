@@ -34,13 +34,24 @@ from yolov5.utils.general import (LOGGER, check_img_size, non_max_suppression, s
 from yolov5.utils.torch_utils import select_device, time_sync
 from yolov5.utils.plots import Annotator, colors, save_one_box
 
-from strong_sort.utils.parser import get_config
-from strong_sort.strong_sort import StrongSORT
+# from strong_sort.utils.parser import get_config
+# from strong_sort.strong_sort import StrongSORT
 
 from bot_sort.bot_sort import BoTSORT
 
 # remove duplicated stream handler to avoid duplicated logging
 logging.getLogger().removeHandler(logging.getLogger().handlers[0])
+
+
+def _xywh_to_tlwh(bbox_xywh):
+    if isinstance(bbox_xywh, np.ndarray):
+        bbox_tlwh = bbox_xywh.copy()
+    elif isinstance(bbox_xywh, torch.Tensor):
+        bbox_tlwh = bbox_xywh.clone()
+    bbox_tlwh[:, 0] = bbox_xywh[:, 0] - bbox_xywh[:, 2] / 2.
+    bbox_tlwh[:, 1] = bbox_xywh[:, 1] - bbox_xywh[:, 3] / 2.
+    return bbox_tlwh
+
 
 @torch.no_grad()
 def run(
@@ -86,7 +97,7 @@ def run(
         #####
         cmc_method='ecc',
         #####
-        with_reid=True,
+        with_reid=False,
         fast_reid_config="fast_reid/configs/MOT17/sbs_S50.yml",
         fast_reid_weights="pretrained/mot17_sbs_S50.pth",
         proximity_thresh=0.5,
@@ -131,10 +142,6 @@ def run(
         dataset = LoadImages(source, img_size=imgsz, stride=stride, auto=pt)
         nr_sources = 1
     vid_path, vid_writer, txt_path = [None] * nr_sources, [None] * nr_sources, [None] * nr_sources
-
-    # initialize StrongSORT
-    cfg = get_config()
-    cfg.merge_from_file(config_strongsort)
 
     # Create as many strong sort instances as there are video sources
     botsort_list = []
@@ -201,29 +208,30 @@ def run(
 
             if det is not None and len(det):
                 # Rescale boxes from img_size to im0 size
-                det[:, :4] = scale_coords(im.shape[2:], det[:, :4], im0.shape).round()
+                #det[:, :4] = scale_coords(im.shape[2:], det[:, :4], im0.shape).round()
 
                 # Print results
                 for c in det[:, -1].unique():
                     n = (det[:, -1] == c).sum()  # detections per class
                     s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
 
-                xywhs = xyxy2xywh(det[:, 0:4])
-                confs = det[:, 4]
-                clss = det[:, 5]
+                #det[:, :4] = xyxy2xywh(det[:, 0:4])
 
                 # pass detections to strongsort
                 t4 = time_sync()
                 outputs[i] = botsort_list[i].update(det.cpu(), im0)
+                # print(outputs[i][0].tlwh)
+                # exit()
                 t5 = time_sync()
                 dt[3] += t5 - t4
 
                 # draw boxes for visualization
                 for t in outputs[i]:
                     tlwh = t.tlwh
+                    print(tlwh.shape)
                     # to MOT format
-                    bbox_left = tlwh[0]
-                    bbox_top = tlwh[1]
+                    bbox_top = tlwh[0]
+                    bbox_left = tlwh[1]
                     bbox_w = tlwh[2]
                     bbox_h = tlwh[3]
                     tid = t.track_id

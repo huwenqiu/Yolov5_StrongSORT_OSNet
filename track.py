@@ -219,11 +219,10 @@ def run(
                     n = (det[:, -1] == c).sum()  # detections per class
                     s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
 
-                # pass detections to strongsort
+                # pass detections to botsort
                 t4 = time_sync()
                 outputs[i] = botsort_list[i].update(detections, im0)
-                # print(outputs[i][0].tlwh)
-                # exit()
+                
                 t5 = time_sync()
                 dt[3] += t5 - t4
 

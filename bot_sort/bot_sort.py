@@ -14,7 +14,7 @@ from fast_reid.fast_reid_interfece import FastReIDInterface
 class STrack(BaseTrack):
     shared_kalman = KalmanFilter()
 
-    def __init__(self, tlwh, score, feat=None, feat_history=10):
+    def __init__(self, tlwh, score, feat=None, feat_history=1):
 
         # wait activate
         self._tlwh = np.asarray(tlwh, dtype=np.float)
@@ -242,9 +242,9 @@ class BoTSORT(object):
                 bboxes = output_results[:, :4]
                 classes = output_results[:, -1]
             else:
-                scores = output_results[:, 4] * output_results[:, 5]
+                scores = output_results[:, 4]
                 bboxes = output_results[:, :4]  # x1y1x2y2
-                classes = output_results[:, -1]
+                classes = output_results[:, 5:]
 
             # Remove bad detections
             lowest_inds = scores > self.track_low_thresh

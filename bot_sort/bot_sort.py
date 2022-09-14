@@ -16,7 +16,7 @@ import time
 class STrack(BaseTrack):
     shared_kalman = KalmanFilter()
 
-    def __init__(self, tlwh, score, feat=None, feat_history=1):
+    def __init__(self, tlwh, score, feat=None, feat_history=30):
 
         # wait activate
         self._tlwh = np.asarray(tlwh, dtype=np.float)

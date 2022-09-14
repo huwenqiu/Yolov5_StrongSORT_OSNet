@@ -10,6 +10,8 @@ from bot_sort.kalman_filter import KalmanFilter
 
 from fast_reid.fast_reid_interfece import FastReIDInterface
 
+import time
+
 
 class STrack(BaseTrack):
     shared_kalman = KalmanFilter()
@@ -291,15 +293,16 @@ class BoTSORT(object):
                 tracked_stracks.append(track)
 
         ''' Step 2: First association, with high score detection boxes'''
+        tic = time.process_time()
         strack_pool = joint_stracks(tracked_stracks, self.lost_stracks)
 
         # Predict the current location with KF
         STrack.multi_predict(strack_pool)
 
         # Fix camera motion
-        warp = self.gmc.apply(img, dets)
-        STrack.multi_gmc(strack_pool, warp)
-        STrack.multi_gmc(unconfirmed, warp)
+        #warp = self.gmc.apply(img, dets)
+        #STrack.multi_gmc(strack_pool, warp)
+        #STrack.multi_gmc(unconfirmed, warp)
 
         # Associate with high score detection boxes
         ious_dists = matching.iou_distance(strack_pool, detections)
@@ -337,8 +340,11 @@ class BoTSORT(object):
             else:
                 track.re_activate(det, self.frame_id, new_id=False)
                 refind_stracks.append(track)
+        toc = time.process_time()
+        print('step2:', toc - tic)
 
         ''' Step 3: Second association, with low score detection boxes'''
+        tic = time.process_time()
         if len(scores):
             inds_high = scores < self.args.track_high_thresh
             inds_low = scores > self.args.track_low_thresh
@@ -403,8 +409,11 @@ class BoTSORT(object):
             track = unconfirmed[it]
             track.mark_removed()
             removed_stracks.append(track)
+        toc = time.process_time()
+        print('step3:', toc - tic)
 
         """ Step 4: Init new stracks"""
+        tic = time.process_time()
         for inew in u_detection:
             track = detections[inew]
             if track.score < self.new_track_thresh:
@@ -412,14 +421,20 @@ class BoTSORT(object):
 
             track.activate(self.kalman_filter, self.frame_id)
             activated_starcks.append(track)
+        toc = time.process_time()
+        print('step4:', toc - tic)
 
         """ Step 5: Update state"""
+        tic = time.process_time()
         for track in self.lost_stracks:
             if self.frame_id - track.end_frame > self.max_time_lost:
                 track.mark_removed()
                 removed_stracks.append(track)
+        toc = time.process_time()
+        print('step5:', toc - tic)
 
         """ Merge """
+        tic = time.process_time()
         self.tracked_stracks = [t for t in self.tracked_stracks if t.state == TrackState.Tracked]
         self.tracked_stracks = joint_stracks(self.tracked_stracks, activated_starcks)
         self.tracked_stracks = joint_stracks(self.tracked_stracks, refind_stracks)
@@ -431,6 +446,9 @@ class BoTSORT(object):
 
         # output_stracks = [track for track in self.tracked_stracks if track.is_activated]
         output_stracks = [track for track in self.tracked_stracks]
+        
+        toc = time.process_time()
+        print('merge:', toc - tic)
 
 
         return output_stracks

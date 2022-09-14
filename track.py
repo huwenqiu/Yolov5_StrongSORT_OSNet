@@ -205,21 +205,23 @@ def run(
             annotator = Annotator(im0, line_width=2, pil=not ascii)
             # if cfg.STRONGSORT.ECC:  # camera motion compensation
             #     botsort_list[i].tracker.camera_update(prev_frames[i], curr_frames[i])
-
+            
+            detections = []
             if det is not None and len(det):
                 # Rescale boxes from img_size to im0 size
-                #det[:, :4] = scale_coords(im.shape[2:], det[:, :4], im0.shape).round()
+                boxes = scale_coords(im.shape[2:], det[:, :4], im0.shape).round()
+                boxes = boxes.cpu().numpy()
+                detections = det.cpu().numpy()
+                detections[:, :4] = boxes
 
                 # Print results
                 for c in det[:, -1].unique():
                     n = (det[:, -1] == c).sum()  # detections per class
                     s += f"{n} {names[int(c)]}{'s' * (n > 1)}, "  # add to string
 
-                #det[:, :4] = xyxy2xywh(det[:, 0:4])
-
                 # pass detections to strongsort
                 t4 = time_sync()
-                outputs[i] = botsort_list[i].update(det.cpu(), im0)
+                outputs[i] = botsort_list[i].update(detections, im0)
                 # print(outputs[i][0].tlwh)
                 # exit()
                 t5 = time_sync()
@@ -228,24 +230,19 @@ def run(
                 # draw boxes for visualization
                 for t in outputs[i]:
                     tlwh = t.tlwh
-                    print(tlwh.shape)
-                    # to MOT format
-                    bbox_top = tlwh[0]
-                    bbox_left = tlwh[1]
-                    bbox_w = tlwh[2]
-                    bbox_h = tlwh[3]
+                    tlbr = t.tlbr
                     tid = t.track_id
                     if save_txt:
                         # Write MOT compliant results to file
                         with open(txt_path + '.txt', 'a') as f:
-                            f.write(('%g ' * 10 + '\n') % (frame_idx + 1, tid, bbox_left,  # MOT format
-                                                            bbox_top, bbox_w, bbox_h, -1, -1, -1, i))
+                            f.write(('%g ' * 10 + '\n') % (frame_idx + 1, tid, tlwh[1],  # MOT format
+                                                           tlwh[0], tlwh[2], tlwh[3], -1, -1, -1, i))
 
                     if save_vid or save_crop or show_vid:  # Add bbox to image
                         tid = int(tid)  # integer id
                         label = None if hide_labels else (f'{tid}' if hide_conf else \
                             (f'{tid}' if hide_class else f'{tid}'))
-                        annotator.box_label(tlwh, label, color=colors(c, True))
+                        annotator.box_label(tlbr, label, color=colors(c, True))
                         if save_crop:
                             txt_file_name = txt_file_name if (isinstance(path, list) and len(path) > 1) else ''
                             save_one_box(bboxes, imc, file=save_dir / 'crops' / txt_file_name / f'{tid}' / f'{p.stem}.jpg', BGR=True)

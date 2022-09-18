@@ -36,6 +36,8 @@ from yolov5.utils.plots import Annotator, colors, save_one_box
 from strong_sort.utils.parser import get_config
 from strong_sort.strong_sort import StrongSORT
 
+from trackers.ocsort_tracker.ocsort import OCSort
+
 # remove duplicated stream handler to avoid duplicated logging
 logging.getLogger().removeHandler(logging.getLogger().handlers[0])
 
@@ -117,24 +119,16 @@ def run(
     cfg.merge_from_file(config_strongsort)
 
     # Create as many strong sort instances as there are video sources
-    strongsort_list = []
+    ocsort_list = []
     for i in range(nr_sources):
-        strongsort_list.append(
-            StrongSORT(
-                strong_sort_weights,
-                device,
-                half,
-                max_dist=cfg.STRONGSORT.MAX_DIST,
-                max_iou_distance=cfg.STRONGSORT.MAX_IOU_DISTANCE,
-                max_age=cfg.STRONGSORT.MAX_AGE,
-                n_init=cfg.STRONGSORT.N_INIT,
-                nn_budget=cfg.STRONGSORT.NN_BUDGET,
-                mc_lambda=cfg.STRONGSORT.MC_LAMBDA,
-                ema_alpha=cfg.STRONGSORT.EMA_ALPHA,
-
+        ocsort_list.append(
+            OCSort(
+                det_thresh=0.65,
+                iou_threshold=0.2,
+                use_byte=True
             )
         )
-        strongsort_list[i].model.warmup()
+        #strongsort_list[i].model.warmup()
     outputs = [None] * nr_sources
 
     # Run tracking
@@ -188,8 +182,8 @@ def run(
             imc = im0.copy() if save_crop else im0  # for save_crop
 
             annotator = Annotator(im0, line_width=2, pil=not ascii)
-            if cfg.STRONGSORT.ECC:  # camera motion compensation
-                strongsort_list[i].tracker.camera_update(prev_frames[i], curr_frames[i])
+            #if cfg.STRONGSORT.ECC:  # camera motion compensation
+            #    strongsort_list[i].tracker.camera_update(prev_frames[i], curr_frames[i])
 
             if det is not None and len(det):
                 # Rescale boxes from img_size to im0 size
@@ -206,7 +200,7 @@ def run(
 
                 # pass detections to strongsort
                 t4 = time_sync()
-                outputs[i] = strongsort_list[i].update(xywhs.cpu(), confs.cpu(), clss.cpu(), im0)
+                outputs[i] = ocsort_list[i].update(det.detach().cpu().numpy())
                 t5 = time_sync()
                 dt[3] += t5 - t4
 
@@ -216,7 +210,7 @@ def run(
     
                         bboxes = output[0:4]
                         id = output[4]
-                        cls = output[5]
+                        #cls = output[5]
 
                         if save_txt:
                             # to MOT format
@@ -230,19 +224,19 @@ def run(
                                                                bbox_top, bbox_w, bbox_h, -1, -1, -1, i))
 
                         if save_vid or save_crop or show_vid:  # Add bbox to image
-                            c = int(cls)  # integer class
+                            #c = int(cls)  # integer class
                             id = int(id)  # integer id
-                            label = None if hide_labels else (f'{id} {names[c]}' if hide_conf else \
-                                (f'{id} {conf:.2f}' if hide_class else f'{id} {names[c]} {conf:.2f}'))
+                            label = None if hide_labels else (f'{id}' if hide_conf else \
+                                (f'{id} {conf:.2f}' if hide_class else f'{id} {conf:.2f}'))
                             annotator.box_label(bboxes, label, color=colors(c, True))
                             if save_crop:
                                 txt_file_name = txt_file_name if (isinstance(path, list) and len(path) > 1) else ''
                                 save_one_box(bboxes, imc, file=save_dir / 'crops' / txt_file_name / names[c] / f'{id}' / f'{p.stem}.jpg', BGR=True)
 
-                LOGGER.info(f'{s}Done. YOLO:({t3 - t2:.3f}s), StrongSORT:({t5 - t4:.3f}s)')
+                LOGGER.info(f'{s}Done. YOLO:({t3 - t2:.3f}s), StrongSORT:({t5 - t4:.5f}s)')
 
             else:
-                strongsort_list[i].increment_ages()
+                #strongsort_list[i].increment_ages()
                 LOGGER.info('No detections')
 
             # Stream results

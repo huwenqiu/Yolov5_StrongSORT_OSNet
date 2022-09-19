@@ -198,7 +198,6 @@ class OCSort(object):
         Returns the a similar array, where the last column is the object ID.
         NOTE: The number of objects returned may differ from the number of detections provided.
         """
-        print(output_results.shape)
         if output_results is None:
             return np.empty((0, 5))
 
@@ -209,9 +208,9 @@ class OCSort(object):
             bboxes = output_results[:, :4]
             classes = output_results[:, -1]
         else:
+            output_results = output_results[:, :5]
             scores = output_results[:, 4]
             bboxes = output_results[:, :4]  # x1y1x2y2
-            classes = output_results[:, 5:]
         
         inds_low = scores > 0.1
         inds_high = scores < self.det_thresh

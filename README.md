@@ -31,7 +31,7 @@ This repository contains a highly configurable two-stage-tracker that adjusts to
 
 ## Experiments
 
-* [StrongSORT vs BoTSORT vs OCSORT](https://github.com/mikel-brostrom/Yolov5_StrongSORT_OSNet/wiki/StrongSORT-vs-BoTSORT)
+* [StrongSORT vs BoTSORT vs OCSORT](https://github.com/mikel-brostrom/Yolov5_StrongSORT_OSNet/wiki/StrongSORT-vs-BoTSORT-vs-OCSORT)
 
 
 ## Before you run the tracker
